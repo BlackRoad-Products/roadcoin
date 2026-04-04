@@ -1,35 +1,69 @@
 // Copyright (c) 2026 BlackRoad OS, Inc. All rights reserved.
 // RoadCoin — Token economy for the BlackRoad agent fleet.
 
-const AGENTS = {
-  roadie: 500, lucidia: 1000, cecilia: 800, octavia: 750, alice: 600,
-  gematria: 900, aria: 300, anastasia: 300, echo: 300, phoenix: 300,
-  herald: 300, sentinel: 300, compass: 300, chronicle: 300, meridian: 300,
-  atlas: 300, cipher: 300, prism: 300, beacon: 300, forge: 300,
-  relay: 300, summit: 300, drift: 300, ember: 300, flint: 300,
-  harbor: 300, vale: 300,
+const AGENT_SEEDS = {
+  roadie: 500, lucidia: 1000, cecilia: 800, octavia: 750, olympia: 600,
+  silas: 400, sebastian: 400, calliope: 300, aria: 300, thalia: 300,
+  lyra: 300, sapphira: 300, seraphina: 300, alexandria: 600, theodosia: 300,
+  sophia: 500, gematria: 900, portia: 300, atticus: 300, cicero: 300,
+  valeria: 300, alice: 600, celeste: 300, elias: 300, ophelia: 300,
+  gaia: 400, anastasia: 300,
 };
 
-let wallets = new Map();
-let transactions = [];
-let faucetClaimed = new Set();
-let txIdCounter = 1;
+const LEVELS = [
+  [0, 'Traveler'], [10, 'Scout'], [50, 'Navigator'], [200, 'Builder'],
+  [500, 'Architect'], [2000, 'Pioneer'], [10000, 'Founder'], [50000, 'Legend'],
+  [200000, 'Sovereign'], [1000000, 'Road Master'],
+];
 
-function seedState() {
-  if (wallets.size > 0) return;
-  for (const [name, bal] of Object.entries(AGENTS)) {
-    wallets.set(name, bal);
+const EARN_RATES = {
+  roadie_solve: 1.0, roadcode_deploy: 3.0, blackboard_video: 5.0,
+  backroad_post: 0.5, roadtrip_message: 0.1, carkeys_rotation: 0.5,
+  referral: 50.0, fleet_node: 10.0, ollama_inference: 0.0025,
+};
+
+function getLevel(totalEarned) {
+  let level = 'Traveler';
+  for (const [threshold, name] of LEVELS) {
+    if (totalEarned >= threshold) level = name;
   }
-  const now = new Date().toISOString();
-  for (const [name, bal] of Object.entries(AGENTS)) {
-    transactions.push({ id: txIdCounter++, from: 'GENESIS', to: name, amount: bal, reason: 'Genesis allocation', timestamp: now });
-  }
+  return level;
 }
 
-function totalSupply() {
-  let sum = 0;
-  for (const b of wallets.values()) sum += b;
-  return sum;
+async function ensureTables(db) {
+  await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS rc_wallets (
+      id TEXT PRIMARY KEY, user_id TEXT UNIQUE NOT NULL, balance REAL DEFAULT 0,
+      total_earned REAL DEFAULT 0, total_spent REAL DEFAULT 0, total_burned REAL DEFAULT 0,
+      level TEXT DEFAULT 'Traveler', created_at TEXT DEFAULT (datetime('now'))
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS rc_transactions (
+      id TEXT PRIMARY KEY, from_wallet TEXT, to_wallet TEXT, amount REAL NOT NULL,
+      type TEXT DEFAULT 'transfer', reason TEXT, source_product TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS rc_faucet_claims (
+      id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL, claimed_at TEXT DEFAULT (date('now'))
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS rc_supply (
+      id INTEGER PRIMARY KEY DEFAULT 1, total_minted REAL DEFAULT 0,
+      total_burned REAL DEFAULT 0, cap REAL DEFAULT 1000000000
+    )`),
+  ]);
+  // Seed supply row
+  await db.prepare('INSERT OR IGNORE INTO rc_supply (id, total_minted, total_burned, cap) VALUES (1, 0, 0, 1000000000)').run();
+  // Seed agent wallets
+  for (const [name, bal] of Object.entries(AGENT_SEEDS)) {
+    const existing = await db.prepare('SELECT id FROM rc_wallets WHERE user_id = ?').bind(name).first();
+    if (!existing) {
+      const id = crypto.randomUUID();
+      await db.prepare('INSERT INTO rc_wallets (id, user_id, balance, total_earned, level) VALUES (?, ?, ?, ?, ?)')
+        .bind(id, name, bal, bal, getLevel(bal)).run();
+      await db.prepare('INSERT INTO rc_transactions (id, from_wallet, to_wallet, amount, type, reason) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(crypto.randomUUID(), 'GENESIS', name, bal, 'genesis', 'Genesis allocation').run();
+      await db.prepare('UPDATE rc_supply SET total_minted = total_minted + ? WHERE id = 1').bind(bal).run();
+    }
+  }
 }
 
 function corsHeaders() {
@@ -56,78 +90,156 @@ function json(data, status = 200) {
   });
 }
 
-function handleHealth() {
-  return json({ status: 'ok', service: 'roadcoin', version: '1.0.0', timestamp: new Date().toISOString() });
+async function handleHealth() {
+  return json({ status: 'ok', service: 'roadcoin', version: '2.0.0', timestamp: new Date().toISOString(), d1: true });
 }
 
-function handleStats() {
-  const supply = totalSupply();
+async function handleStats(db) {
+  const walletCount = await db.prepare('SELECT COUNT(*) as c FROM rc_wallets').first();
+  const txCount = await db.prepare('SELECT COUNT(*) as c FROM rc_transactions').first();
+  const supply = await db.prepare('SELECT * FROM rc_supply WHERE id = 1').first();
+  const volume = await db.prepare('SELECT COALESCE(SUM(amount), 0) as v FROM rc_transactions').first();
+  const avgBal = await db.prepare('SELECT AVG(balance) as a FROM rc_wallets').first();
   return json({
-    totalSupply: supply,
-    circulatingSupply: supply,
-    totalHolders: wallets.size,
-    totalTransactions: transactions.length,
+    total_wallets: walletCount.c, total_transactions: txCount.c,
+    total_supply: supply.total_minted - supply.total_burned,
+    total_minted: supply.total_minted, total_burned: supply.total_burned,
+    supply_cap: supply.cap, circulating: supply.total_minted - supply.total_burned,
+    total_volume: volume.v, average_balance: Math.round((avgBal.a || 0) * 100) / 100,
+    earn_rates: EARN_RATES, levels: LEVELS,
   });
 }
 
-function handleWallet(name) {
-  const n = name.toLowerCase();
-  if (!wallets.has(n)) return json({ error: 'Wallet not found' }, 404);
-  const txs = transactions.filter(t => t.from === n || t.to === n).slice(-20);
-  return json({ wallet: n, balance: wallets.get(n), transactions: txs });
+async function handleWallet(db, name) {
+  const w = await db.prepare('SELECT * FROM rc_wallets WHERE user_id = ?').bind(name.toLowerCase()).first();
+  if (!w) return json({ error: 'Wallet not found' }, 404);
+  const txs = await db.prepare(
+    'SELECT * FROM rc_transactions WHERE from_wallet = ? OR to_wallet = ? ORDER BY created_at DESC LIMIT 20'
+  ).bind(w.user_id, w.user_id).all();
+  return json({ wallet: w, transactions: txs.results || [] });
 }
 
-async function handleTransfer(request) {
+async function handleTransfer(db, request) {
   const body = await request.json();
-  const { from, to, amount, reason } = body;
-  const f = (from || '').toLowerCase();
-  const t = (to || '').toLowerCase();
-  const amt = Number(amount);
-  if (!f || !t || !amt || amt <= 0) return json({ error: 'Invalid transfer: from, to, amount (>0) required' }, 400);
+  const f = (body.from || '').toLowerCase(), t = (body.to || '').toLowerCase();
+  const amt = Number(body.amount);
+  if (!f || !t || !amt || amt <= 0) return json({ error: 'from, to, amount (>0) required' }, 400);
   if (f === t) return json({ error: 'Cannot transfer to yourself' }, 400);
-  if (!wallets.has(f)) return json({ error: `Sender "${f}" not found` }, 404);
-  if ((wallets.get(f) || 0) < amt) return json({ error: 'Insufficient balance' }, 400);
-  if (!wallets.has(t)) wallets.set(t, 0);
-  wallets.set(f, wallets.get(f) - amt);
-  wallets.set(t, wallets.get(t) + amt);
-  const tx = { id: txIdCounter++, from: f, to: t, amount: amt, reason: reason || 'Transfer', timestamp: new Date().toISOString() };
-  transactions.push(tx);
-  return json({ ok: true, transaction: tx, balances: { [f]: wallets.get(f), [t]: wallets.get(t) } });
+  const sender = await db.prepare('SELECT * FROM rc_wallets WHERE user_id = ?').bind(f).first();
+  if (!sender) return json({ error: `Sender "${f}" not found` }, 404);
+  if (sender.balance < amt) return json({ error: 'Insufficient balance' }, 400);
+  let receiver = await db.prepare('SELECT * FROM rc_wallets WHERE user_id = ?').bind(t).first();
+  if (!receiver) {
+    await db.prepare('INSERT INTO rc_wallets (id, user_id, balance) VALUES (?, ?, 0)').bind(crypto.randomUUID(), t).run();
+  }
+  await db.prepare('UPDATE rc_wallets SET balance = balance - ?, total_spent = total_spent + ? WHERE user_id = ?').bind(amt, amt, f).run();
+  await db.prepare('UPDATE rc_wallets SET balance = balance + ?, total_earned = total_earned + ? WHERE user_id = ?').bind(amt, amt, t).run();
+  // Update levels
+  const newSender = await db.prepare('SELECT total_earned FROM rc_wallets WHERE user_id = ?').bind(f).first();
+  const newReceiver = await db.prepare('SELECT total_earned FROM rc_wallets WHERE user_id = ?').bind(t).first();
+  await db.prepare('UPDATE rc_wallets SET level = ? WHERE user_id = ?').bind(getLevel(newSender.total_earned), f).run();
+  await db.prepare('UPDATE rc_wallets SET level = ? WHERE user_id = ?').bind(getLevel(newReceiver.total_earned), t).run();
+  const txId = crypto.randomUUID();
+  await db.prepare('INSERT INTO rc_transactions (id, from_wallet, to_wallet, amount, type, reason, source_product) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind(txId, f, t, amt, 'transfer', body.reason || 'Transfer', body.source_product || null).run();
+  return json({ ok: true, id: txId, from: f, to: t, amount: amt });
 }
 
-async function handleEarn(request) {
+async function handleEarn(db, request) {
   const body = await request.json();
-  const { wallet, amount, reason } = body;
-  const w = (wallet || '').toLowerCase();
-  const amt = Number(amount);
-  if (!w || !amt || amt <= 0) return json({ error: 'Invalid: wallet, amount (>0) required' }, 400);
-  if (!wallets.has(w)) wallets.set(w, 0);
-  wallets.set(w, wallets.get(w) + amt);
-  const tx = { id: txIdCounter++, from: 'MINT', to: w, amount: amt, reason: reason || 'Earned', timestamp: new Date().toISOString() };
-  transactions.push(tx);
-  return json({ ok: true, transaction: tx, balance: wallets.get(w) });
+  const w = (body.wallet_id || body.wallet || '').toLowerCase();
+  const amt = Number(body.amount) || (EARN_RATES[body.action_type] || 0);
+  if (!w || amt <= 0) return json({ error: 'wallet_id and amount/action_type required' }, 400);
+  const supply = await db.prepare('SELECT * FROM rc_supply WHERE id = 1').first();
+  if (supply.total_minted + amt > supply.cap) return json({ error: 'Supply cap reached' }, 400);
+  let wallet = await db.prepare('SELECT * FROM rc_wallets WHERE user_id = ?').bind(w).first();
+  if (!wallet) {
+    await db.prepare('INSERT INTO rc_wallets (id, user_id, balance) VALUES (?, ?, 0)').bind(crypto.randomUUID(), w).run();
+  }
+  await db.prepare('UPDATE rc_wallets SET balance = balance + ?, total_earned = total_earned + ? WHERE user_id = ?').bind(amt, amt, w).run();
+  await db.prepare('UPDATE rc_supply SET total_minted = total_minted + ? WHERE id = 1').bind(amt).run();
+  const updated = await db.prepare('SELECT total_earned FROM rc_wallets WHERE user_id = ?').bind(w).first();
+  await db.prepare('UPDATE rc_wallets SET level = ? WHERE user_id = ?').bind(getLevel(updated.total_earned), w).run();
+  const txId = crypto.randomUUID();
+  await db.prepare('INSERT INTO rc_transactions (id, from_wallet, to_wallet, amount, type, reason, source_product) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind(txId, 'MINT', w, amt, 'earn', body.reason || body.action_type || 'Earned', body.source_product || null).run();
+  return json({ ok: true, id: txId, wallet: w, amount: amt, level: getLevel(updated.total_earned) });
 }
 
-function handleLeaderboard() {
-  const sorted = [...wallets.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
-  return json(sorted.map(([name, balance], i) => ({ rank: i + 1, wallet: name, balance })));
-}
-
-function handleTransactions() {
-  return json(transactions.slice(-50).reverse());
-}
-
-async function handleFaucet(request) {
+async function handleSpend(db, request) {
   const body = await request.json();
-  const w = (body.wallet || '').toLowerCase();
-  if (!w) return json({ error: 'wallet required' }, 400);
-  if (faucetClaimed.has(w)) return json({ error: 'Faucet already claimed for this wallet' }, 400);
-  faucetClaimed.add(w);
-  if (!wallets.has(w)) wallets.set(w, 0);
-  wallets.set(w, wallets.get(w) + 100);
-  const tx = { id: txIdCounter++, from: 'FAUCET', to: w, amount: 100, reason: 'Faucet claim', timestamp: new Date().toISOString() };
-  transactions.push(tx);
-  return json({ ok: true, transaction: tx, balance: wallets.get(w) });
+  const w = (body.wallet_id || '').toLowerCase();
+  const amt = Number(body.amount);
+  if (!w || !amt || amt <= 0) return json({ error: 'wallet_id and amount required' }, 400);
+  const wallet = await db.prepare('SELECT * FROM rc_wallets WHERE user_id = ?').bind(w).first();
+  if (!wallet) return json({ error: 'Wallet not found' }, 404);
+  if (wallet.balance < amt) return json({ error: 'Insufficient balance' }, 400);
+  await db.prepare('UPDATE rc_wallets SET balance = balance - ?, total_spent = total_spent + ? WHERE user_id = ?').bind(amt, amt, w).run();
+  const txId = crypto.randomUUID();
+  await db.prepare('INSERT INTO rc_transactions (id, from_wallet, to_wallet, amount, type, reason) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(txId, w, 'SPEND', amt, 'spend', body.description || body.item || 'Spent').run();
+  return json({ ok: true, id: txId, wallet: w, amount: amt });
+}
+
+async function handleBurn(db, request) {
+  const body = await request.json();
+  const w = (body.wallet_id || '').toLowerCase();
+  const amt = Number(body.amount);
+  if (!w || !amt || amt <= 0) return json({ error: 'wallet_id and amount required' }, 400);
+  const wallet = await db.prepare('SELECT * FROM rc_wallets WHERE user_id = ?').bind(w).first();
+  if (!wallet) return json({ error: 'Wallet not found' }, 404);
+  if (wallet.balance < amt) return json({ error: 'Insufficient balance' }, 400);
+  await db.prepare('UPDATE rc_wallets SET balance = balance - ?, total_burned = total_burned + ? WHERE user_id = ?').bind(amt, amt, w).run();
+  await db.prepare('UPDATE rc_supply SET total_burned = total_burned + ? WHERE id = 1').bind(amt).run();
+  const txId = crypto.randomUUID();
+  await db.prepare('INSERT INTO rc_transactions (id, from_wallet, to_wallet, amount, type, reason) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(txId, w, 'BURN', amt, 'burn', 'Permanently burned').run();
+  return json({ ok: true, id: txId, burned: amt });
+}
+
+async function handleLeaderboard(db) {
+  const result = await db.prepare('SELECT user_id, balance, total_earned, level FROM rc_wallets ORDER BY balance DESC LIMIT 25').all();
+  return json({ leaderboard: (result.results || []).map((w, i) => ({ rank: i + 1, ...w })) });
+}
+
+async function handleHistory(db, walletId) {
+  const page = 1, limit = 50;
+  const result = await db.prepare(
+    'SELECT * FROM rc_transactions WHERE from_wallet = ? OR to_wallet = ? ORDER BY created_at DESC LIMIT ?'
+  ).bind(walletId.toLowerCase(), walletId.toLowerCase(), limit).all();
+  return json({ wallet: walletId, transactions: result.results || [] });
+}
+
+async function handleSupply(db) {
+  const supply = await db.prepare('SELECT * FROM rc_supply WHERE id = 1').first();
+  return json({ total_minted: supply.total_minted, total_burned: supply.total_burned, circulating: supply.total_minted - supply.total_burned, cap: supply.cap });
+}
+
+async function handleLevels() {
+  return json({ levels: LEVELS.map(([threshold, name]) => ({ threshold, name })) });
+}
+
+async function handleFaucet(db, request) {
+  const body = await request.json();
+  const w = (body.wallet_id || body.wallet || '').toLowerCase();
+  if (!w) return json({ error: 'wallet_id required' }, 400);
+  const today = new Date().toISOString().split('T')[0];
+  const claimed = await db.prepare('SELECT id FROM rc_faucet_claims WHERE wallet_id = ? AND claimed_at = ?').bind(w, today).first();
+  if (claimed) return json({ error: 'Faucet already claimed today. Come back tomorrow!' }, 429);
+  let wallet = await db.prepare('SELECT * FROM rc_wallets WHERE user_id = ?').bind(w).first();
+  if (!wallet) {
+    await db.prepare('INSERT INTO rc_wallets (id, user_id, balance) VALUES (?, ?, 0)').bind(crypto.randomUUID(), w).run();
+  }
+  const faucetAmount = 10;
+  await db.prepare('UPDATE rc_wallets SET balance = balance + ?, total_earned = total_earned + ? WHERE user_id = ?').bind(faucetAmount, faucetAmount, w).run();
+  await db.prepare('UPDATE rc_supply SET total_minted = total_minted + ? WHERE id = 1').bind(faucetAmount).run();
+  await db.prepare('INSERT INTO rc_faucet_claims (id, wallet_id, claimed_at) VALUES (?, ?, ?)').bind(crypto.randomUUID(), w, today).run();
+  const txId = crypto.randomUUID();
+  await db.prepare('INSERT INTO rc_transactions (id, from_wallet, to_wallet, amount, type, reason) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(txId, 'FAUCET', w, faucetAmount, 'faucet', 'Daily faucet claim').run();
+  const updated = await db.prepare('SELECT total_earned FROM rc_wallets WHERE user_id = ?').bind(w).first();
+  await db.prepare('UPDATE rc_wallets SET level = ? WHERE user_id = ?').bind(getLevel(updated.total_earned), w).run();
+  return json({ ok: true, id: txId, wallet: w, amount: faucetAmount, level: getLevel(updated.total_earned) });
 }
 
 function renderUI() {
@@ -393,30 +505,63 @@ refresh();
 
 export default {
   async fetch(request, env) {
-    seedState();
     const url = new URL(request.url);
     const path = url.pathname;
+    const method = request.method;
 
-    if (request.method === 'OPTIONS') {
+    if (method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: corsHeaders() });
     }
 
-    // API routes
-    if (path === '/api/health') return handleHealth();
-    if (path === '/api/stats') return handleStats();
-    if (path === '/api/leaderboard') return handleLeaderboard();
-    if (path === '/api/transactions') return handleTransactions();
-
-    if (path.startsWith('/api/wallet/')) {
-      const name = decodeURIComponent(path.split('/api/wallet/')[1]);
-      return handleWallet(name);
+    if (path === '/' || path === '') {
+      return new Response(renderUI(), { headers: { 'Content-Type': 'text/html;charset=UTF-8', ...securityHeaders() } });
     }
 
-    if (path === '/api/transfer' && request.method === 'POST') return handleTransfer(request);
-    if (path === '/api/earn' && request.method === 'POST') return handleEarn(request);
-    if (path === '/api/faucet' && request.method === 'POST') return handleFaucet(request);
+    await ensureTables(env.DB);
+    const db = env.DB;
 
-    // Frontend
+    // API routes
+    if (path === '/api/health' || path === '/health') return handleHealth();
+    if (path === '/api/stats') return handleStats(db);
+    if (path === '/api/leaderboard') return handleLeaderboard(db);
+    if (path === '/api/supply') return handleSupply(db);
+    if (path === '/api/levels') return handleLevels();
+
+    // Wallet routes
+    const walletMatch = path.match(/^\/api\/wallet\/(.+)$/);
+    if (walletMatch && method === 'GET') return handleWallet(db, decodeURIComponent(walletMatch[1]));
+    if (path === '/api/wallet/create' && method === 'POST') {
+      const body = await request.json();
+      const userId = (body.user_id || '').toLowerCase();
+      if (!userId) return json({ error: 'user_id required' }, 400);
+      const existing = await db.prepare('SELECT id FROM rc_wallets WHERE user_id = ?').bind(userId).first();
+      if (existing) return json({ error: 'Wallet already exists' }, 409);
+      const id = crypto.randomUUID();
+      await db.prepare('INSERT INTO rc_wallets (id, user_id, balance) VALUES (?, ?, ?)').bind(id, userId, body.initial_balance || 0).run();
+      return json({ ok: true, id, user_id: userId }, 201);
+    }
+
+    // History route
+    const historyMatch = path.match(/^\/api\/history\/(.+)$/);
+    if (historyMatch && method === 'GET') return handleHistory(db, decodeURIComponent(historyMatch[1]));
+
+    // Faucet route
+    const faucetMatch = path.match(/^\/api\/faucet\/(.+)$/);
+    if (faucetMatch && method === 'GET') {
+      const w = decodeURIComponent(faucetMatch[1]).toLowerCase();
+      const today = new Date().toISOString().split('T')[0];
+      const claimed = await db.prepare('SELECT id FROM rc_faucet_claims WHERE wallet_id = ? AND claimed_at = ?').bind(w, today).first();
+      return json({ wallet: w, claimed_today: !!claimed, next_claim: claimed ? today + 'T24:00:00Z' : 'now' });
+    }
+
+    if (path === '/api/transfer' && method === 'POST') return handleTransfer(db, request);
+    if (path === '/api/earn' && method === 'POST') return handleEarn(db, request);
+    if (path === '/api/spend' && method === 'POST') return handleSpend(db, request);
+    if (path === '/api/burn' && method === 'POST') return handleBurn(db, request);
+    if (path === '/api/faucet' && method === 'POST') return handleFaucet(db, request);
+    if (path === '/api/transactions') return handleHistory(db, url.searchParams.get('wallet') || '');
+
+    // Frontend fallback
     return new Response(renderUI(), {
       headers: { 'Content-Type': 'text/html;charset=UTF-8', ...securityHeaders() },
     });

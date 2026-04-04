@@ -1,3 +1,15 @@
 name = "roadcoin-blackroad"
 main = "src/worker.js"
 compatibility_date = "2026-03-31"
+
+[[routes]]
+pattern = "roadcoin.blackroad.io/*"
+zone_name = "blackroad.io"
+
+[ai]
+binding = "AI"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "roadcoin"
+database_id = "ddf034a8-e90e-45a8-b27a-d9b1489a2b66"
