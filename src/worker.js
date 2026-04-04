@@ -248,7 +248,18 @@ function renderUI() {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RoadCoin | BlackRoad OS</title>
+<title>RoadCoin — Token Economy — BlackRoad OS</title>
+<meta name="description" content="Token economy for BlackRoad OS. Earn ROAD for real actions across 17 products. 27 agent wallets, 10 levels from Traveler to Road Master, daily faucet, 1B supply cap.">
+<meta name="robots" content="index, follow, noai, noimageai">
+<link rel="canonical" href="https://roadcoin.blackroad.io/">
+<meta property="og:title" content="RoadCoin — Token Economy — BlackRoad OS">
+<meta property="og:description" content="Earn ROAD for real actions. 27 agent wallets, 10 levels, daily faucet, 1B supply cap.">
+<meta property="og:url" content="https://roadcoin.blackroad.io/"><meta property="og:type" content="website">
+<meta property="og:image" content="https://images.blackroad.io/pixel-art/road-logo.png"><meta property="og:site_name" content="BlackRoad OS">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="RoadCoin — Token Economy — BlackRoad OS">
+<meta name="twitter:description" content="Earn ROAD for real actions. 27 agent wallets, 10 levels, daily faucet.">
+<meta name="twitter:image" content="https://images.blackroad.io/pixel-art/road-logo.png">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"RoadCoin","url":"https://roadcoin.blackroad.io/","description":"Token economy for BlackRoad OS. Earn ROAD for real actions across 17 products.","applicationCategory":"FinanceApplication","operatingSystem":"Web","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"author":{"@type":"Organization","name":"BlackRoad OS, Inc.","url":"https://blackroad.io"}}</script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#0a0a0a;color:#f5f5f5;font-family:system-ui,-apple-system,sans-serif;line-height:1.6}
