@@ -1,15 +1,19 @@
 name = "roadcoin-blackroad"
-main = "src/worker.js"
-compatibility_date = "2026-03-31"
-
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
 [[routes]]
 pattern = "roadcoin.blackroad.io/*"
 zone_name = "blackroad.io"
-
-[ai]
-binding = "AI"
-
+[vars]
+ENVIRONMENT = "production"
+SERVICE_NAME = "roadcoin"
+VERSION = "2.0.0"
+SYMBOL = "ROAD"
+[[kv_namespaces]]
+binding = "STORE"
+id = "0ae5cc5fc0b54d9ca488e2d3af4d078c"
 [[d1_databases]]
 binding = "DB"
-database_name = "roadcoin"
-database_id = "ddf034a8-e90e-45a8-b27a-d9b1489a2b66"
+database_name = "blackroad-os-main"
+database_id = "e2c6dcd9-c21a-48ac-8807-7b3a6881c4f7"
