@@ -42,23 +42,23 @@ html,body{min-height:100vh;background:var(--bg);color:var(--text);font-family:'S
 h1{font-size:2rem;font-weight:700;background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:4px}
 .sub{font-size:.75rem;color:var(--sub);font-family:'JetBrains Mono',monospace;margin-bottom:24px}
 .hero-stat{text-align:center;padding:32px;background:var(--card);border:1px solid var(--border);border-radius:12px;margin-bottom:20px}
-.hero-n{font-size:3rem;font-weight:700;color:var(--gold);font-family:'JetBrains Mono',monospace}
+.hero-n{font-size:3rem;font-weight:700;color:#e0e0e0;font-family:'JetBrains Mono',monospace}
 .hero-l{font-size:.75rem;color:var(--sub);font-family:'JetBrains Mono',monospace;margin-top:6px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px}
 .ct{font-size:.65rem;color:var(--sub);text-transform:uppercase;letter-spacing:.08em;font-family:'JetBrains Mono',monospace;margin-bottom:14px}
 label{display:block;font-size:.7rem;color:var(--sub);font-family:'JetBrains Mono',monospace;margin-bottom:4px;margin-top:10px;text-transform:uppercase}
 input,select{width:100%;padding:9px 12px;background:#0d0d0d;border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:.82rem;outline:none}
-input:focus,select:focus{border-color:var(--gold)}
+input:focus,select:focus{border-color:#e0e0e0}
 .btn{margin-top:12px;padding:10px 20px;background:var(--gold);color:#000;border:none;border-radius:7px;cursor:pointer;font-weight:700;font-size:.85rem;width:100%}
 .balance-card{background:#0d0d0d;border:1px solid var(--border);border-radius:8px;padding:16px;margin-top:10px;display:none}
 .bal-addr{font-size:.68rem;color:var(--sub);font-family:'JetBrains Mono',monospace}
-.bal-amount{font-size:2rem;font-weight:700;color:var(--gold)}
+.bal-amount{font-size:2rem;font-weight:700;color:#e0e0e0}
 .leaderboard{display:flex;flex-direction:column;gap:5px}
 .lb-item{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:#0d0d0d;border:1px solid var(--border);border-radius:6px;font-size:.78rem}
 .lb-rank{font-family:'JetBrains Mono',monospace;font-size:.65rem;color:var(--sub);width:20px}
 .lb-name{font-weight:600;text-transform:capitalize}
-.lb-bal{font-family:'JetBrains Mono',monospace;color:var(--gold);font-size:.75rem}
+.lb-bal{font-family:'JetBrains Mono',monospace;color:#e0e0e0;font-size:.75rem}
 </style></head><body>
 <div class="grad-bar"></div>
 <div class="wrap">
