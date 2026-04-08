@@ -253,6 +253,7 @@ function renderUI() {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="https://images.blackroad.io/brand/brand.css">
 <title>RoadCoin — Token Economy — BlackRoad OS</title>
 <meta name="description" content="Token economy for BlackRoad OS. Earn ROAD for real actions across 17 products. 27 agent wallets, 10 levels from Traveler to Road Master, daily faucet, 1B supply cap.">
 <meta name="robots" content="index, follow, noai, noimageai">
