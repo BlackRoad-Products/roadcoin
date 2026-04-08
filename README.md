@@ -70,7 +70,7 @@ Cosmetic only — no privilege gating.
 
 ## Status
 
-**LIVE** — 310 ROAD circulating, 11 holders, auto-minting | [coin.blackroad.io](https://coin.blackroad.io)
+**LIVE** — 310 ROAD circulating, 11 holders, auto-minting | [roadcoin.blackroad.io](https://roadcoin.blackroad.io)
 
 Buy: [coinbase.blackroad.io](https://coinbase.blackroad.io)
 
