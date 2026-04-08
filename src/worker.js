@@ -49,6 +49,11 @@ async function ensureTables(db) {
       id INTEGER PRIMARY KEY DEFAULT 1, total_minted REAL DEFAULT 0,
       total_burned REAL DEFAULT 0, cap REAL DEFAULT 1000000000
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS rc_stakes (
+      id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL, amount REAL NOT NULL,
+      duration_days INTEGER NOT NULL, started_at TEXT DEFAULT (datetime('now')),
+      unlocks_at TEXT, status TEXT DEFAULT 'active', bonus_rate REAL DEFAULT 0.05
+    )`),
   ]);
   // Seed supply row
   await db.prepare('INSERT OR IGNORE INTO rc_supply (id, total_minted, total_burned, cap) VALUES (1, 0, 0, 1000000000)').run();
@@ -509,7 +514,9 @@ async function doFaucet() {
 
 function refresh() { loadStats(); loadLeaderboard(); loadTransactions(); }
 refresh();
+window.addEventListener('message',function(e){if(e.data</script></script>e.data.type==='blackroad-os:context'){window._osUser=e.data.user;window._osToken=e.data.token;}});if(window.parent!==window)window.parent.postMessage({type:'blackroad-os:request-context'},'*');
 </script>
+<script>!function(){var b=document.createElement("div");b.style.cssText="position:fixed;top:0;left:0;right:0;z-index:99999;background:#0a0a0a;border-bottom:1px solid #1a1a1a;padding:6px 16px;display:flex;align-items:center;justify-content:space-between;font-family:sans-serif";b.innerHTML='<span style="font-size:11px;color:#737373">Part of <a href="https://os.blackroad.io" style="color:#f5f5f5;font-weight:600;text-decoration:none">BlackRoad OS</a></span><a href="https://os.blackroad.io" style="font-size:10px;font-weight:600;padding:4px 12px;background:#f5f5f5;color:#000;border-radius:4px;text-decoration:none">Try Free</a>';b.id="br-bar";if(!document.getElementById("br-bar")){document.body.prepend(b);document.body.style.paddingTop=(parseInt(getComputedStyle(document.body).paddingTop)||0)+32+"px"}}();</script>
 </body>
 </html>`;
 }
@@ -528,10 +535,24 @@ export default {
       return new Response(renderUI(), { headers: { 'Content-Type': 'text/html;charset=UTF-8', ...securityHeaders() } });
     }
 
+    if (path === '/sitemap.xml') return new Response('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">  <url><loc>https://roadcoin.blackroad.io/</loc><lastmod>2026-04-05</lastmod><changefreq>daily</changefreq><priority>1.0</priority></url>  <url><loc>https://roadcoin.blackroad.io/api/leaderboard</loc><lastmod>2026-04-05</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>  <url><loc>https://roadcoin.blackroad.io/api/supply</loc><lastmod>2026-04-05</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url></urlset>', { headers: { 'Content-Type': 'application/xml' } });
+    }
+
+    if (path === '/robots.txt') {
+      return new Response(`User-agent: *\nAllow: /\nSitemap: https://roadcoin.blackroad.io/sitemap.xml\n\nUser-agent: GPTBot\nDisallow: /\n\nUser-agent: ChatGPT-User\nDisallow: /\n\nUser-agent: CCBot\nDisallow: /`, { headers: { 'Content-Type': 'text/plain' } });
+    }
+
     await ensureTables(env.DB);
     const db = env.DB;
 
     // API routes
+    if (path === '/api/track' && (request.method === 'POST' || method === 'POST')) {
+      try { const body = await request.json(); const cf = request.cf || {};
+        if (env.DB) { await env.DB.prepare("CREATE TABLE IF NOT EXISTS analytics_events (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT DEFAULT 'pageview', path TEXT, referrer TEXT, country TEXT, city TEXT, device TEXT, screen TEXT, scroll_depth INTEGER DEFAULT 0, engagement_ms INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')))").run();
+        await env.DB.prepare('INSERT INTO analytics_events (type, path, referrer, country, city, device, screen, scroll_depth, engagement_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(body.type||'pageview', body.path||'/', body.referrer||'', cf.country||'', cf.city||'', body.device||'', body.screen||'', body.scroll||0, body.time||0).run(); }
+      } catch(e) {}
+      return new Response(JSON.stringify({ok:true}), {headers:{'Content-Type':'application/json'}});
+    }
     if (path === '/api/health' || path === '/health') return handleHealth();
     if (path === '/api/stats') return handleStats(db);
     if (path === '/api/leaderboard') return handleLeaderboard(db);
@@ -571,6 +592,213 @@ export default {
     if (path === '/api/burn' && method === 'POST') return handleBurn(db, request);
     if (path === '/api/faucet' && method === 'POST') return handleFaucet(db, request);
     if (path === '/api/transactions') return handleHistory(db, url.searchParams.get('wallet') || '');
+
+    // --- Enhanced: Rewards info ---
+    if (path === '/api/rewards') return json({ earn_rates: EARN_RATES, levels: LEVELS });
+
+    // --- Enhanced: Transaction history with pagination ---
+    const txHistMatch = path.match(/^\/api\/transactions\/(.+)$/);
+    if (txHistMatch && method === 'GET') {
+      const wid = decodeURIComponent(txHistMatch[1]).toLowerCase();
+      const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 200);
+      const offset = parseInt(url.searchParams.get('offset') || '0');
+      const rows = await db.prepare('SELECT * FROM rc_transactions WHERE from_wallet = ? OR to_wallet = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').bind(wid, wid, limit, offset).all();
+      const countR = await db.prepare('SELECT COUNT(*) as cnt FROM rc_transactions WHERE from_wallet = ? OR to_wallet = ?').bind(wid, wid).first();
+      return json({ transactions: rows.results, total: countR?.cnt || 0, limit, offset, has_more: offset + limit < (countR?.cnt || 0) });
+    }
+
+    // --- Enhanced: Wallet summary ---
+    const summaryMatch = path.match(/^\/api\/wallet\/(.+)\/summary$/);
+    if (summaryMatch && method === 'GET') {
+      const uid = decodeURIComponent(summaryMatch[1]).toLowerCase();
+      const w = await db.prepare('SELECT * FROM rc_wallets WHERE user_id = ?').bind(uid).first();
+      if (!w) return json({ error: 'Wallet not found' }, 404);
+      const rank = await db.prepare('SELECT COUNT(*) as rank FROM rc_wallets WHERE total_earned > ?').bind(w.total_earned).first();
+      const recentTx = await db.prepare('SELECT * FROM rc_transactions WHERE from_wallet = ? OR to_wallet = ? ORDER BY created_at DESC LIMIT 10').bind(uid, uid).all();
+      const stakes = await db.prepare('SELECT * FROM rc_stakes WHERE wallet_id = ? AND status = ?').bind(uid, 'active').all();
+      let nextLevel = null;
+      for (const [threshold, name] of LEVELS) { if (w.total_earned < threshold) { nextLevel = { name, threshold, needed: threshold - w.total_earned }; break; } }
+      return json({ wallet: w, rank: (rank?.rank || 0) + 1, next_level: nextLevel, recent_transactions: recentTx.results, active_stakes: stakes.results, total_staked: (stakes.results || []).reduce((s, st) => s + st.amount, 0) });
+    }
+
+    // --- Enhanced: Supply dashboard ---
+    if (path === '/api/supply/dashboard') {
+      const supply = await db.prepare('SELECT * FROM rc_supply WHERE id = 1').first();
+      if (!supply) return json({ error: 'Supply not initialized' }, 500);
+      const walletCount = await db.prepare('SELECT COUNT(*) as cnt FROM rc_wallets').first();
+      return json({ total_minted: supply.total_minted, total_burned: supply.total_burned, circulating: supply.total_minted - supply.total_burned, cap: supply.cap, percent_minted: ((supply.total_minted / supply.cap) * 100).toFixed(4), remaining: supply.cap - supply.total_minted, wallets: walletCount?.cnt || 0 });
+    }
+
+    // --- Staking ---
+    if (path === '/api/stake' && method === 'POST') {
+      try {
+        const body = await request.json();
+        const { wallet_id, amount, duration_days } = body;
+        if (!wallet_id || !amount || !duration_days) return json({ error: 'wallet_id, amount, duration_days required' }, 400);
+        const w = await db.prepare('SELECT * FROM rc_wallets WHERE user_id = ?').bind(wallet_id.toLowerCase()).first();
+        if (!w) return json({ error: 'Wallet not found' }, 404);
+        if (w.balance < amount) return json({ error: 'Insufficient balance' }, 400);
+        const bonusRate = duration_days >= 365 ? 0.25 : duration_days >= 180 ? 0.15 : duration_days >= 90 ? 0.10 : duration_days >= 30 ? 0.05 : 0.02;
+        const id = crypto.randomUUID();
+        const unlocks = new Date(Date.now() + duration_days * 86400000).toISOString();
+        await db.prepare('UPDATE rc_wallets SET balance = balance - ? WHERE user_id = ?').bind(amount, wallet_id.toLowerCase()).run();
+        await db.prepare('INSERT INTO rc_stakes (id, wallet_id, amount, duration_days, unlocks_at, bonus_rate) VALUES (?, ?, ?, ?, ?, ?)').bind(id, wallet_id.toLowerCase(), amount, duration_days, unlocks, bonusRate).run();
+        return json({ ok: true, stake: { id, amount, duration_days, bonus_rate: bonusRate, unlocks_at: unlocks } });
+      } catch (e) { return json({ error: 'Invalid request' }, 400); }
+    }
+
+    const stakesMatch = path.match(/^\/api\/stakes\/(.+)$/);
+    if (stakesMatch && method === 'GET') {
+      const wid = decodeURIComponent(stakesMatch[1]).toLowerCase();
+      const now = new Date().toISOString();
+      // Auto-unlock matured stakes
+      const matured = await db.prepare("SELECT * FROM rc_stakes WHERE wallet_id = ? AND status = 'active' AND unlocks_at <= ?").bind(wid, now).all();
+      for (const s of (matured.results || [])) {
+        const bonus = s.amount * s.bonus_rate;
+        await db.prepare('UPDATE rc_wallets SET balance = balance + ?, total_earned = total_earned + ? WHERE user_id = ?').bind(s.amount + bonus, bonus, wid).run();
+        await db.prepare("UPDATE rc_stakes SET status = 'completed' WHERE id = ?").bind(s.id).run();
+        await db.prepare('UPDATE rc_supply SET total_minted = total_minted + ? WHERE id = 1').bind(bonus).run();
+        await db.prepare('INSERT INTO rc_transactions (id, from_wallet, to_wallet, amount, type, reason) VALUES (?, ?, ?, ?, ?, ?)').bind(crypto.randomUUID(), 'STAKE', wid, bonus, 'stake_bonus', `Stake ${s.id} matured`).run();
+      }
+      const all = await db.prepare('SELECT * FROM rc_stakes WHERE wallet_id = ? ORDER BY started_at DESC').bind(wid).all();
+      return json({ stakes: all.results, total: all.results.length });
+    }
+
+    // --- Enhanced: Streak System ---
+    if (path === '/api/streak' && method === 'GET') {
+      const uid = url.searchParams.get('user_id') || '';
+      if (!uid) return json({ error: 'user_id required' }, 400);
+      try {
+        await db.prepare("CREATE TABLE IF NOT EXISTS rc_streaks (user_id TEXT PRIMARY KEY, current_streak INTEGER DEFAULT 0, longest_streak INTEGER DEFAULT 0, last_active TEXT, multiplier REAL DEFAULT 1.0, recovery_rides_used INTEGER DEFAULT 0)").run();
+        let streak = await db.prepare('SELECT * FROM rc_streaks WHERE user_id = ?').bind(uid.toLowerCase()).first();
+        if (!streak) {
+          await db.prepare("INSERT INTO rc_streaks (user_id, current_streak, longest_streak, last_active, multiplier) VALUES (?, 0, 0, datetime('now'), 1.0)").bind(uid.toLowerCase()).run();
+          streak = { current_streak: 0, longest_streak: 0, multiplier: 1.0, recovery_rides_used: 0 };
+        }
+        const mult = streak.current_streak >= 30 ? 2.0 : streak.current_streak >= 14 ? 1.5 : streak.current_streak >= 7 ? 1.25 : streak.current_streak >= 3 ? 1.1 : 1.0;
+        return json({ user_id: uid, current_streak: streak.current_streak, longest_streak: streak.longest_streak, multiplier: mult, last_active: streak.last_active, recovery_rides_used: streak.recovery_rides_used, streak_bonuses: [{days:3,bonus:1.1},{days:7,bonus:1.25},{days:14,bonus:1.5},{days:30,bonus:2.0},{days:100,bonus:3.0}] });
+      } catch (e) { return json({ error: e.message }, 500); }
+    }
+
+    // --- Enhanced: Check in (daily login) ---
+    if (path === '/api/checkin' && method === 'POST') {
+      try {
+        const body = await request.json();
+        const uid = (body.user_id || '').toLowerCase();
+        if (!uid) return json({ error: 'user_id required' }, 400);
+        await db.prepare("CREATE TABLE IF NOT EXISTS rc_streaks (user_id TEXT PRIMARY KEY, current_streak INTEGER DEFAULT 0, longest_streak INTEGER DEFAULT 0, last_active TEXT, multiplier REAL DEFAULT 1.0, recovery_rides_used INTEGER DEFAULT 0)").run();
+        let streak = await db.prepare('SELECT * FROM rc_streaks WHERE user_id = ?').bind(uid).first();
+        const today = new Date().toISOString().split('T')[0];
+        if (!streak) {
+          await db.prepare("INSERT INTO rc_streaks (user_id, current_streak, longest_streak, last_active) VALUES (?, 1, 1, ?)").bind(uid, today).run();
+          // Earn daily login bonus
+          const w = await db.prepare('SELECT id FROM rc_wallets WHERE user_id = ?').bind(uid).first();
+          if (w) { await db.prepare('UPDATE rc_wallets SET balance = balance + 1, total_earned = total_earned + 1 WHERE user_id = ?').bind(uid).run(); }
+          return json({ ok: true, streak: 1, earned: 1, message: "Welcome! First day on the highway." });
+        }
+        const lastDate = streak.last_active ? streak.last_active.split('T')[0] : '';
+        if (lastDate === today) return json({ ok: true, streak: streak.current_streak, already_checked_in: true });
+        const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+        let newStreak = lastDate === yesterday ? streak.current_streak + 1 : 1;
+        const longest = Math.max(newStreak, streak.longest_streak);
+        const mult = newStreak >= 30 ? 2.0 : newStreak >= 14 ? 1.5 : newStreak >= 7 ? 1.25 : newStreak >= 3 ? 1.1 : 1.0;
+        const earned = Math.round(1 * mult * 10) / 10;
+        await db.prepare("UPDATE rc_streaks SET current_streak = ?, longest_streak = ?, last_active = ?, multiplier = ? WHERE user_id = ?").bind(newStreak, longest, today, mult, uid).run();
+        const w = await db.prepare('SELECT id FROM rc_wallets WHERE user_id = ?').bind(uid).first();
+        if (w) {
+          await db.prepare('UPDATE rc_wallets SET balance = balance + ?, total_earned = total_earned + ? WHERE user_id = ?').bind(earned, earned, uid).run();
+          await db.prepare('INSERT INTO rc_transactions (id, from_wallet, to_wallet, amount, type, reason) VALUES (?, ?, ?, ?, ?, ?)').bind(crypto.randomUUID(), 'SYSTEM', uid, earned, 'daily_checkin', `Day ${newStreak} streak (${mult}x)`).run();
+        }
+        const streakMsg = newStreak === 7 ? "Week Warrior! 7-day streak!" : newStreak === 30 ? "Monthly Master! 30-day streak!" : newStreak === 100 ? "Century Rider! 100 days!" : newStreak === 365 ? "Year-Round Roadie! 365 days!" : `Day ${newStreak} on the highway.`;
+        return json({ ok: true, streak: newStreak, longest, multiplier: mult, earned, message: streakMsg });
+      } catch (e) { return json({ error: e.message }, 500); }
+    }
+
+    // --- Enhanced: Recovery Ride ---
+    if (path === '/api/recovery-ride' && method === 'POST') {
+      try {
+        const body = await request.json();
+        const uid = (body.user_id || '').toLowerCase();
+        const rideType = body.type || 'light'; // light=50 ROAD, full=200 ROAD
+        if (!uid) return json({ error: 'user_id required' }, 400);
+        await db.prepare("CREATE TABLE IF NOT EXISTS rc_streaks (user_id TEXT PRIMARY KEY, current_streak INTEGER DEFAULT 0, longest_streak INTEGER DEFAULT 0, last_active TEXT, multiplier REAL DEFAULT 1.0, recovery_rides_used INTEGER DEFAULT 0)").run();
+        const streak = await db.prepare('SELECT * FROM rc_streaks WHERE user_id = ?').bind(uid).first();
+        if (!streak || streak.current_streak < 1) return json({ error: 'No active streak to recover' }, 400);
+        const cost = rideType === 'full' ? 200 : 50;
+        const w = await db.prepare('SELECT * FROM rc_wallets WHERE user_id = ?').bind(uid).first();
+        if (!w || w.balance < cost) return json({ error: `Insufficient balance. Recovery Ride costs ${cost} ROAD.` }, 400);
+        await db.prepare('UPDATE rc_wallets SET balance = balance - ? WHERE user_id = ?').bind(cost, uid).run();
+        await db.prepare('UPDATE rc_supply SET total_burned = total_burned + ? WHERE id = 1').bind(cost).run();
+        await db.prepare("UPDATE rc_streaks SET last_active = date('now'), recovery_rides_used = recovery_rides_used + 1 WHERE user_id = ?").bind(uid).run();
+        await db.prepare('INSERT INTO rc_transactions (id, from_wallet, to_wallet, amount, type, reason) VALUES (?, ?, ?, ?, ?, ?)').bind(crypto.randomUUID(), uid, 'BURN', cost, 'recovery_ride', `${rideType} recovery ride`).run();
+        return json({ ok: true, type: rideType, cost, streak_protected: streak.current_streak, message: rideType === 'full' ? `Streak of ${streak.current_streak} days fully protected! No catch-up needed.` : `Streak of ${streak.current_streak} days protected. Complete a meaningful action today to confirm.` });
+      } catch (e) { return json({ error: e.message }, 500); }
+    }
+
+    // --- Enhanced: Daily earning caps ---
+    if (path === '/api/caps' && method === 'GET') {
+      const uid = url.searchParams.get('user_id') || '';
+      if (!uid) return json({ daily_cap: 500, weekly_cap: 2500 });
+      try {
+        const todayEarned = await db.prepare("SELECT COALESCE(SUM(amount),0) as total FROM rc_transactions WHERE to_wallet = ? AND type != 'transfer' AND type != 'genesis' AND created_at >= date('now')").bind(uid.toLowerCase()).first();
+        const weekEarned = await db.prepare("SELECT COALESCE(SUM(amount),0) as total FROM rc_transactions WHERE to_wallet = ? AND type != 'transfer' AND type != 'genesis' AND created_at >= date('now', '-7 days')").bind(uid.toLowerCase()).first();
+        return json({ user_id: uid, daily_cap: 500, weekly_cap: 2500, earned_today: todayEarned?.total || 0, earned_this_week: weekEarned?.total || 0, daily_remaining: Math.max(0, 500 - (todayEarned?.total || 0)), weekly_remaining: Math.max(0, 2500 - (weekEarned?.total || 0)) });
+      } catch { return json({ daily_cap: 500, weekly_cap: 2500 }); }
+    }
+
+    // --- Enhanced: Economy overview ---
+    if (path === '/api/economy' && method === 'GET') {
+      try {
+        const supply = await db.prepare('SELECT * FROM rc_supply WHERE id = 1').first();
+        const walletCount = await db.prepare('SELECT COUNT(*) as cnt FROM rc_wallets').first();
+        const txCount = await db.prepare('SELECT COUNT(*) as cnt FROM rc_transactions').first();
+        const todayTx = await db.prepare("SELECT COUNT(*) as cnt, COALESCE(SUM(amount),0) as vol FROM rc_transactions WHERE created_at >= date('now')").first();
+        const stakeCount = await db.prepare("SELECT COUNT(*) as cnt, COALESCE(SUM(amount),0) as locked FROM rc_stakes WHERE status = 'active'").first();
+        const streakCount = await db.prepare("SELECT COUNT(*) as cnt, AVG(current_streak) as avg_streak FROM rc_streaks WHERE current_streak > 0").first();
+        return json({
+          supply: { minted: supply?.total_minted || 0, burned: supply?.total_burned || 0, circulating: (supply?.total_minted || 0) - (supply?.total_burned || 0), cap: supply?.cap || 1000000000 },
+          wallets: walletCount?.cnt || 0,
+          transactions: { total: txCount?.cnt || 0, today: todayTx?.cnt || 0, today_volume: todayTx?.vol || 0 },
+          staking: { active_stakes: stakeCount?.cnt || 0, total_locked: stakeCount?.locked || 0 },
+          streaks: { active: streakCount?.cnt || 0, average_length: Math.round(streakCount?.avg_streak || 0) },
+        });
+      } catch (e) { return json({ error: e.message }, 500); }
+    }
+
+    // --- Enhanced: Governance proposals ---
+    if (path === '/api/governance/proposals' && method === 'GET') {
+      try {
+        await db.prepare("CREATE TABLE IF NOT EXISTS rc_proposals (id TEXT PRIMARY KEY, title TEXT, description TEXT, proposer TEXT, type TEXT DEFAULT 'parameter', status TEXT DEFAULT 'active', yes_votes REAL DEFAULT 0, no_votes REAL DEFAULT 0, created_at TEXT DEFAULT (datetime('now')), expires_at TEXT)").run();
+        const rows = await db.prepare("SELECT * FROM rc_proposals ORDER BY created_at DESC LIMIT 20").all();
+        return json({ proposals: rows.results });
+      } catch { return json({ proposals: [] }); }
+    }
+    if (path === '/api/governance/propose' && method === 'POST') {
+      try {
+        const body = await request.json();
+        if (!body.title || !body.proposer) return json({ error: 'title and proposer required' }, 400);
+        // Check proposer has minimum 1 ROAD
+        const w = await db.prepare('SELECT balance FROM rc_wallets WHERE user_id = ?').bind(body.proposer.toLowerCase()).first();
+        if (!w || w.balance < 1) return json({ error: 'Minimum 1 ROAD balance required to propose' }, 400);
+        await db.prepare("CREATE TABLE IF NOT EXISTS rc_proposals (id TEXT PRIMARY KEY, title TEXT, description TEXT, proposer TEXT, type TEXT DEFAULT 'parameter', status TEXT DEFAULT 'active', yes_votes REAL DEFAULT 0, no_votes REAL DEFAULT 0, created_at TEXT DEFAULT (datetime('now')), expires_at TEXT)").run();
+        const id = crypto.randomUUID().slice(0, 12);
+        const expires = new Date(Date.now() + 7 * 86400000).toISOString();
+        await db.prepare("INSERT INTO rc_proposals (id, title, description, proposer, type, expires_at) VALUES (?, ?, ?, ?, ?, ?)").bind(id, body.title, body.description || '', body.proposer.toLowerCase(), body.type || 'parameter', expires).run();
+        return json({ ok: true, id, expires_at: expires });
+      } catch (e) { return json({ error: e.message }, 500); }
+    }
+    if (path === '/api/governance/vote' && method === 'POST') {
+      try {
+        const body = await request.json();
+        if (!body.proposal_id || !body.voter || !body.vote) return json({ error: 'proposal_id, voter, vote required' }, 400);
+        const w = await db.prepare('SELECT balance FROM rc_wallets WHERE user_id = ?').bind(body.voter.toLowerCase()).first();
+        if (!w) return json({ error: 'Wallet not found' }, 404);
+        const weight = Math.min(w.balance, 1000); // Cap vote weight at 1000
+        const col = body.vote === 'yes' ? 'yes_votes' : 'no_votes';
+        await db.prepare(`UPDATE rc_proposals SET ${col} = ${col} + ? WHERE id = ?`).bind(weight, body.proposal_id).run();
+        return json({ ok: true, vote: body.vote, weight });
+      } catch (e) { return json({ error: e.message }, 500); }
+    }
 
     // Frontend fallback
     return new Response(renderUI(), {
