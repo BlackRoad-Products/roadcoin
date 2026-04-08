@@ -1,5 +1,5 @@
 name = "roadcoin-blackroad"
-main = "src/index.ts"
+main = "src/worker.js"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 [[routes]]
@@ -13,6 +13,8 @@ SYMBOL = "ROAD"
 [[kv_namespaces]]
 binding = "STORE"
 id = "0ae5cc5fc0b54d9ca488e2d3af4d078c"
+[ai]
+binding = "AI"
 [[d1_databases]]
 binding = "DB"
 database_name = "blackroad-os-main"
